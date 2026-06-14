@@ -1,0 +1,60 @@
+
+THE BASIC CONCEPT
+System points / currency for within your system, sort of like mimu but for individual systems
+THE BASIC CONCEPT	1
+Base functions:	1
+Fun Functions:	1
+IDEAS	1
+SUGGESTIONS	1
+TO-DOS	2
+
+
+Base functions: 
+Member list and see what points they have ; use a table that can be modified with variables and added to
+Member 1
+12
+Member 2
+2
+Member 3
+-5
+
+
+Shop that can be used for redeeming your points for insys rewards (up to user)
+Base rewards - 
+Chores that can get you points for completing
+Cleaning, self care, etc [user can add more]
+
+Fun Functions:
+Currency name can be modified, base name is coins
+Doing good, doing great, doing bad - depending on point value
+Negatives: doing bad; 5-10: doing good
+
+
+
+IDEAS
+Name ideas: Coinllective, Syspoints, Systicks
+
+SUGGESTIONS
+
+
+TO-DOS
+Make the bot
+Setup Base + Invite
+Add base features
+Member adding
+Points system
+Shop system
+Adding shop rewards
+Chores system
+Adding chores to do
+Add fun features
+Bad/good/great [can turn on and off or modify values.]
+Currency name modification
+Make bot mascot
+Test bot
+Make closed beta server
+Make bug reporting sheet/forum {in server or anon google doc?}
+Fix bugs
+Open beta server
+More bugfixing
+
