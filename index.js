@@ -5,7 +5,8 @@ require("dotenv").config();
 const { Client, GatewayIntentBits } = require("discord.js");
 const fs = require("fs");
 
-let pendingPurge = {};
+const DATA_FILE = "./data.json";
+const pendingPurge = {};
 
 const client = new Client({
   intents: [
@@ -15,8 +16,9 @@ const client = new Client({
   ],
 });
 
-const DATA_FILE = "./data.json";
-
+// =====================
+// DATA
+// =====================
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({ users: {} }, null, 2));
@@ -39,6 +41,9 @@ function getUserData(data, discordUserId) {
   return data.users[discordUserId];
 }
 
+// =====================
+// HELPERS
+// =====================
 function generateId(length = 5) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let id = "";
@@ -50,21 +55,78 @@ function generateId(length = 5) {
   return id;
 }
 
-client.once("ready", () => {
+function displayName(message) {
+  return message.member?.displayName || message.author.username;
+}
+
+function memberListText(userData) {
+  const entries = Object.entries(userData.members);
+
+  if (entries.length === 0) {
+    return "No members yet.";
+  }
+
+  return entries
+    .map(([id, member]) => `[${id}] ${member.name} — ${member.points} points`)
+    .join("\n");
+}
+
+function leaderboardText(userData) {
+  const entries = Object.entries(userData.members);
+
+  if (entries.length === 0) {
+    return "No members yet.";
+  }
+
+  return entries
+    .sort((a, b) => b[1].points - a[1].points)
+    .map(([id, member], index) => {
+      const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}.`;
+      return `${medal} [${id}] ${member.name} — ${member.points} points`;
+    })
+    .join("\n");
+}
+
+// =====================
+// READY
+// =====================
+client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
+// =====================
+// COMMANDS
+// =====================
 client.on("messageCreate", (message) => {
   if (message.author.bot) return;
 
   const data = loadData();
   const userData = getUserData(data, message.author.id);
+  const username = displayName(message);
+  const content = message.content.trim();
 
-  if (message.content.startsWith("!addmember ")) {
-    const name = message.content.split(" ").slice(1).join(" ");
+  // HELP
+  if (content === "sp_help") {
+    return message.channel.send(
+      "**SysPoints Commands:**\n" +
+        "`sp_addmember <name>`\n" +
+        "`sp_members`\n" +
+        "`sp_addpoints <member ID> <amount>`\n" +
+        "`sp_removepoints <member ID> <amount>`\n" +
+        "`sp_setpoints <member ID> <amount>`\n" +
+        "`sp_checkpoints <member ID>`\n" +
+        "`sp_leaderboard`\n" +
+        "`sp_deletemember <member ID>`\n" +
+        "`sp_purge`\n"
+    );
+  }
+
+  // ADD MEMBER
+  if (content.startsWith("sp_addmember ")) {
+    const name = content.split(" ").slice(1).join(" ");
 
     if (!name) {
-      return message.reply("Usage: `!addmember <name>`");
+      return message.channel.send("Usage: `sp_addmember <name>`");
     }
 
     let id;
@@ -73,119 +135,126 @@ client.on("messageCreate", (message) => {
     } while (userData.members[id]);
 
     userData.members[id] = {
-      name: name,
+      name,
       points: 0,
     };
 
     saveData(data);
 
-    return message.reply(`Added member:\n[ID: ${id}] ${name} — 0 points`);
+    return message.channel.send(
+      `Added member to ${username}'s system:\n[ID: ${id}] ${name} — 0 points`
+    );
   }
 
-  if (message.content === "!members") {
-    const entries = Object.entries(userData.members);
-
-    if (entries.length === 0) {
-      return message.reply("You don't have any members yet.");
-    }
-
-    const table = entries
-      .map(([id, member]) => `[${id}] ${member.name} — ${member.points} points`)
-      .join("\n");
-
-    return message.reply("**Your Member List:**\n" + table);
+  // MEMBERS
+  if (content === "sp_members") {
+    return message.channel.send(
+      `**${username}'s members:**\n${memberListText(userData)}`
+    );
   }
 
-  if (message.content.startsWith("!addpoints ")) {
-    const args = message.content.split(" ");
+  // LEADERBOARD
+  if (content === "sp_leaderboard") {
+    return message.channel.send(
+      `**${username}'s system leaderboard:**\n${leaderboardText(userData)}`
+    );
+  }
+
+  // ADD POINTS
+  if (content.startsWith("sp_addpoints ")) {
+    const args = content.split(" ");
     const id = args[1];
     const amount = Number(args[2]);
 
     if (!id || isNaN(amount)) {
-      return message.reply("Usage: `!addpoints <member ID> <amount>`");
+      return message.channel.send("Usage: `sp_addpoints <member ID> <amount>`");
     }
 
     if (!userData.members[id]) {
-      return message.reply("Member not found.");
+      return message.channel.send("Member not found.");
     }
 
     userData.members[id].points += amount;
     saveData(data);
 
-    return message.reply(
-      `✅ Added ${amount} points to ${userData.members[id].name}. They now have ${userData.members[id].points} points.`
+    return message.channel.send(
+      `${username}'s ${userData.members[id].name} now has ${userData.members[id].points} points.`
     );
   }
 
-  if (message.content.startsWith("!removepoints ")) {
-    const args = message.content.split(" ");
+  // REMOVE POINTS
+  if (content.startsWith("sp_removepoints ")) {
+    const args = content.split(" ");
     const id = args[1];
     const amount = Number(args[2]);
 
     if (!id || isNaN(amount)) {
-      return message.reply("Usage: `!removepoints <member ID> <amount>`");
+      return message.channel.send("Usage: `sp_removepoints <member ID> <amount>`");
     }
 
     if (!userData.members[id]) {
-      return message.reply("Member not found.");
+      return message.channel.send("Member not found.");
     }
 
     userData.members[id].points -= amount;
     saveData(data);
 
-    return message.reply(
-      `✅ Removed ${amount} points from ${userData.members[id].name}. They now have ${userData.members[id].points} points.`
+    return message.channel.send(
+      `${username}'s ${userData.members[id].name} now has ${userData.members[id].points} points.`
     );
   }
 
-  if (message.content.startsWith("!setpoints ")) {
-    const args = message.content.split(" ");
+  // SET POINTS
+  if (content.startsWith("sp_setpoints ")) {
+    const args = content.split(" ");
     const id = args[1];
     const amount = Number(args[2]);
 
     if (!id || isNaN(amount)) {
-      return message.reply("Usage: `!setpoints <member ID> <amount>`");
+      return message.channel.send("Usage: `sp_setpoints <member ID> <amount>`");
     }
 
     if (!userData.members[id]) {
-      return message.reply("Member not found.");
+      return message.channel.send("Member not found.");
     }
 
     userData.members[id].points = amount;
     saveData(data);
 
-    return message.reply(
-      `✅ Set ${userData.members[id].name}'s points to ${amount}.`
+    return message.channel.send(
+      `${username}'s ${userData.members[id].name} now has ${amount} points.`
     );
   }
 
-  if (message.content.startsWith("!checkpoints ")) {
-    const args = message.content.split(" ");
+  // CHECK POINTS
+  if (content.startsWith("sp_checkpoints ")) {
+    const args = content.split(" ");
     const id = args[1];
 
     if (!id) {
-      return message.reply("Usage: `!checkpoints <member ID>`");
+      return message.channel.send("Usage: `sp_checkpoints <member ID>`");
     }
 
     if (!userData.members[id]) {
-      return message.reply("Member not found.");
+      return message.channel.send("Member not found.");
     }
 
-    return message.reply(
-      `${userData.members[id].name} has ${userData.members[id].points} points.`
+    return message.channel.send(
+      `${username}'s ${userData.members[id].name} has ${userData.members[id].points} points.`
     );
   }
 
-  if (message.content.startsWith("!deletemember ")) {
-    const args = message.content.split(" ");
+  // DELETE MEMBER
+  if (content.startsWith("sp_deletemember ")) {
+    const args = content.split(" ");
     const id = args[1];
 
     if (!id) {
-      return message.reply("Usage: `!deletemember <member ID>`");
+      return message.channel.send("Usage: `sp_deletemember <member ID>`");
     }
 
     if (!userData.members[id]) {
-      return message.reply("Member not found.");
+      return message.channel.send("Member not found.");
     }
 
     const deletedName = userData.members[id].name;
@@ -193,20 +262,22 @@ client.on("messageCreate", (message) => {
 
     saveData(data);
 
-    return message.reply(`Deleted member: ${deletedName}`);
+    return message.channel.send(`Deleted ${deletedName} from ${username}'s system.`);
   }
 
-  if (message.content === "!purge") {
+  // PURGE
+  if (content === "sp_purge") {
     pendingPurge[message.author.id] = true;
 
-    return message.reply(
-      "Are you sure you want to wipe YOUR system data?\nType `!confirm purge` to proceed."
+    return message.channel.send(
+      `Are you sure you want to wipe ${username}'s system data?\nType \`sp_confirm purge\` to proceed.`
     );
   }
 
-  if (message.content === "!confirm purge") {
+  // CONFIRM PURGE
+  if (content === "sp_confirm purge") {
     if (!pendingPurge[message.author.id]) {
-      return message.reply("No purge is pending.");
+      return message.channel.send("No purge is pending.");
     }
 
     data.users[message.author.id] = {
@@ -216,25 +287,8 @@ client.on("messageCreate", (message) => {
     pendingPurge[message.author.id] = false;
     saveData(data);
 
-    return message.reply("Your system data has been wiped.");
-  }
-
-  if (message.content === "!sp_help") {
-    return message.reply(
-      "**SysPoints Commands:**\n" +
-        "`!addmember <name>`\n" +
-        "`!members`\n" +
-        "`!addpoints <member ID> <amount>`\n" +
-        "`!removepoints <member ID> <amount>`\n" +
-        "`!setpoints <member ID> <amount>`\n" +
-        "`!checkpoints <member ID>`\n" +
-        "`!deletemember <member ID>`\n" +
-        "`!purge`\n"
-    );
+    return message.channel.send(`${username}'s system data has been wiped.`);
   }
 });
-
-console.log("Token exists:", !!process.env.DISCORD_TOKEN);
-console.log("Length:", process.env.DISCORD_TOKEN?.length);
 
 client.login(process.env.DISCORD_TOKEN);
