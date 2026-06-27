@@ -5,7 +5,15 @@ require("dotenv").config();
 const { Client, GatewayIntentBits } = require("discord.js");
 const fs = require("fs");
 
-const DATA_FILE = "./data.json";
+const DATA_FILE = process.env.DATA_FILE || "./data.json";
+
+const path = require("path");
+
+const dataDir = path.dirname(DATA_FILE);
+
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
 const pendingPurge = {};
 
 const client = new Client({
@@ -17,7 +25,7 @@ const client = new Client({
 });
 
 // syspoints @ dreamibun05
-// beta build 0.2.0
+// beta build 0.2.2
 // last updated fri jun 26th
 
 // =====================
@@ -69,7 +77,6 @@ function getUserData(data, discordUserId) {
 
   const userData = data.users[discordUserId];
 
-  // migration for older data
   if (!userData.members) userData.members = {};
   if (!userData.chores) userData.chores = {};
   if (!userData.history) userData.history = [];
@@ -87,6 +94,10 @@ function ensureSystem(data, userData) {
   for (const member of Object.values(userData.members)) {
     member.systemId = userData.systemId;
   }
+
+  for (const chore of Object.values(userData.chores)) {
+    chore.systemId = userData.systemId;
+  }
 }
 
 // =====================
@@ -100,13 +111,62 @@ function systemDisplayName(userData, fallbackName) {
   return userData.systemName || `${fallbackName}'s system`;
 }
 
+function normalize(text) {
+  return String(text || "").trim().toLowerCase();
+}
+
+function findMember(userData, input) {
+  const search = normalize(input);
+  if (!search) return null;
+
+  const entries = Object.entries(userData.members);
+
+  let exact = entries.find(([id]) => normalize(id) === search);
+  if (exact) return { id: exact[0], member: exact[1] };
+
+  exact = entries.find(([, member]) => normalize(member.name) === search);
+  if (exact) return { id: exact[0], member: exact[1] };
+
+  const partial = entries.filter(([, member]) =>
+    normalize(member.name).includes(search)
+  );
+
+  if (partial.length === 1) {
+    return { id: partial[0][0], member: partial[0][1] };
+  }
+
+  return null;
+}
+
+function findMembers(userData, input) {
+  const search = normalize(input);
+  if (!search) return [];
+
+  return Object.entries(userData.members).filter(([id, member]) => {
+    return normalize(id) === search || normalize(member.name).includes(search);
+  });
+}
+
+function findChore(userData, input) {
+  const search = normalize(input);
+  if (!search) return null;
+
+  const entry = Object.entries(userData.chores).find(
+    ([id]) => normalize(id) === search
+  );
+
+  if (!entry) return null;
+
+  return { id: entry[0], chore: entry[1] };
+}
+
 function memberListText(userData) {
   const entries = Object.entries(userData.members);
 
   if (entries.length === 0) return "No members yet.";
 
   return entries
-    .map(([id, member]) => `[${id}] ${member.name} — ${member.points} points`)
+    .map(([id, member]) => `[\`${id}\`] ${member.name} — ${member.points} points`)
     .join("\n");
 }
 
@@ -116,7 +176,7 @@ function choreListText(userData) {
   if (entries.length === 0) return "No chores yet.";
 
   return entries
-    .map(([id, chore]) => `[${id}] ${chore.name} — ${chore.points} points`)
+    .map(([id, chore]) => `[\`${id}\`] ${chore.name} — ${chore.points} points`)
     .join("\n");
 }
 
@@ -161,9 +221,126 @@ function leaderboardText(userData) {
           ? "🥉"
           : `${index + 1}.`;
 
-      return `${medal} [${id}] ${member.name} — ${member.points} points`;
+      return `${medal} **${member.name}** — ${member.points} points\nID: \`${id}\``;
     })
     .join("\n");
+}
+
+function levenshtein(a, b) {
+  a = normalize(a);
+  b = normalize(b);
+
+  const matrix = Array.from({ length: b.length + 1 }, () => []);
+
+  for (let i = 0; i <= b.length; i++) matrix[i][0] = i;
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b[i - 1] === a[j - 1]) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[b.length][a.length];
+}
+
+function findMemberLookup(userData, input) {
+  const search = normalize(input);
+  if (!search) return null;
+
+  const entries = Object.entries(userData.members);
+
+  // exact ID
+  const exactId = entries.find(([id]) => normalize(id) === search);
+  if (exactId) return { id: exactId[0], member: exactId[1] };
+
+  // exact name
+  const exactName = entries.find(([, member]) => normalize(member.name) === search);
+  if (exactName) return { id: exactName[0], member: exactName[1] };
+
+  // partial name
+  const partial = entries.filter(([, member]) =>
+    normalize(member.name).includes(search)
+  );
+
+  if (partial.length === 1) {
+    return { id: partial[0][0], member: partial[0][1] };
+  }
+
+  if (partial.length > 1) {
+    return {
+      multiple: partial.map(([id, member]) => ({
+        id,
+        name: member.name,
+        points: member.points,
+      })),
+    };
+  }
+
+  // fuzzy name / fuzzy word
+  let best = null;
+  let bestScore = Infinity;
+
+  for (const [id, member] of entries) {
+    const name = normalize(member.name);
+    const fullNameScore = levenshtein(search, name);
+
+    const wordScores = name
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((word) => levenshtein(search, word));
+
+    const score = Math.min(fullNameScore, ...wordScores);
+
+    if (score < bestScore) {
+      bestScore = score;
+      best = { id, member };
+    }
+  }
+
+  if (best && bestScore <= 2) {
+    return { suggestion: best };
+  }
+
+  return null;
+}
+
+function memberLookupResponse(message, found, userData, username) {
+  if (!found) {
+    return message.channel.send("Member not found.");
+  }
+
+  if (found.multiple) {
+    return message.channel.send(
+      "Multiple members match:\n" +
+        found.multiple
+          .map((m) => `[\`${m.id}\`] ${m.name} — ${m.points} points`)
+          .join("\n")
+    );
+  }
+
+  if (found.suggestion) {
+    return message.channel.send(
+      `Member not found. Did you mean **${found.suggestion.member.name}**?\n` +
+        `ID: \`${found.suggestion.id}\`\n` +
+        `Try: \`sp_member ${found.suggestion.id}\``
+    );
+  }
+
+  return message.channel.send(
+    `## ${found.member.name}\n\n` +
+      `**ID:** \`${found.id}\`\n` +
+      `**Points:** ${found.member.points}\n` +
+      `**System:** ${systemDisplayName(userData, username)}`
+  );
 }
 
 // =====================
@@ -184,8 +361,13 @@ client.on("messageCreate", (message) => {
   const username = displayName(message);
   const content = message.content.trim();
 
+  if (!content.startsWith("sp_")) return;
+
+  const args = content.split(/\s+/);
+  const command = normalize(args[0]);
+
   // HELP
-  if (content === "sp_help" || content === "sp_commands") {
+  if (command === "sp_help" || command === "sp_commands") {
     return message.channel.send(
       "## SysPoints Commands:\n" +
         "**System management**\n" +
@@ -195,36 +377,37 @@ client.on("messageCreate", (message) => {
         "`sp_addmember <name>`\n" +
         "`sp_bulkadd <name1>, <name2>, <name3>`\n" +
         "`sp_members`\n" +
-        "`sp_rename <member ID> <new name>`\n" +
-        "`sp_find <name>`\n" +
+        "`sp_rename <member ID or name> <new name>`\n" +
+        "`sp_find <member ID or name>`\n" +
         "`sp_id <member name>`\n" +
-        "`sp_memberinfo <member ID>`\n" +
+        "`sp_memberinfo <member ID or name>`\n" +
         "**Points management**\n" +
-        "`sp_addpoints <member ID> <amount>`\n" +
-        "`sp_removepoints <member ID> <amount>`\n" +
-        "`sp_setpoints <member ID> <amount>`\n" +
-        "`sp_resetpoints <member ID>`\n" +
-        "`sp_checkpoints <member ID>`\n" +
-        "`sp_givepoints @user <member ID> <amount>`\n" +
+        "`sp_addpoints <member ID or name> <amount>`\n" +
+        "`sp_removepoints <member ID or name> <amount>`\n" +
+        "`sp_setpoints <member ID or name> <amount>`\n" +
+        "`sp_resetpoints <member ID or name>`\n" +
+        "`sp_checkpoints <member ID or name>`\n" +
+        "`sp_givepoints @user <member ID or name> <amount>`\n" +
         "`sp_leaderboard`\n" +
         "`sp_recent`\n" +
         "**Chores**\n" +
         "`sp_chore add <points> <chore>`\n" +
         "`sp_chore list`\n" +
-        "`sp_chore finish <chore ID> <member ID>`\n" +
+        "`sp_chore finish <chore ID> <member ID or name>`\n" +
         "`sp_chore rename <chore ID> <new name>`\n" +
         "`sp_chore editpoints <chore ID> <points>`\n" +
         "`sp_chore delete <chore ID>`\n" +
         "***Danger zone!***\n" +
-        "`sp_deletemember <member ID>`\n" +
+        "`sp_deletemember <member ID or name>`\n" +
+        "`sp_removemember <member ID or name>`\n" +
         "`sp_purge`\n" +
-        "*Note! Both sp_help and sp_commands work to access this menu at any time!*"
+        "*Note! Commands are not case-sensitive.*"
     );
   }
 
-  // CREATE / RENAME SYSTEM
-  if (content.startsWith("sp_createsystem ")) {
-    const systemName = content.split(" ").slice(1).join(" ");
+  // CREATE SYSTEM
+  if (command === "sp_createsystem") {
+    const systemName = args.slice(1).join(" ");
 
     if (!systemName) {
       return message.channel.send("Usage: `sp_createsystem <system name>`");
@@ -241,7 +424,7 @@ client.on("messageCreate", (message) => {
   }
 
   // VIEW SYSTEM
-  if (content === "sp_system") {
+  if (command === "sp_system") {
     ensureSystem(data, userData);
     saveData(data);
 
@@ -254,8 +437,8 @@ client.on("messageCreate", (message) => {
   }
 
   // RENAME SYSTEM
-  if (content.startsWith("sp_systemrename ")) {
-    const name = content.substring("sp_systemrename ".length).trim();
+  if (command === "sp_systemrename") {
+    const name = args.slice(1).join(" ");
 
     if (!name) {
       return message.channel.send("Usage: `sp_systemrename <new name>`");
@@ -270,8 +453,8 @@ client.on("messageCreate", (message) => {
   }
 
   // ADD MEMBER
-  if (content.startsWith("sp_addmember ")) {
-    const name = content.split(" ").slice(1).join(" ");
+  if (command === "sp_addmember") {
+    const name = args.slice(1).join(" ");
 
     if (!name) {
       return message.channel.send("Usage: `sp_addmember <name>`");
@@ -293,19 +476,17 @@ client.on("messageCreate", (message) => {
     saveData(data);
 
     return message.channel.send(
-      `Added member to **${systemDisplayName(
-        userData,
-        username
-      )}**:\n[ID: ${id}] ${name} — 0 points`
+      `Added member to **${systemDisplayName(userData, username)}**:\n` +
+        `**${name}** — 0 points\nID: \`${id}\``
     );
   }
 
   // BULK ADD MEMBERS
-  if (content.startsWith("sp_bulkadd ")) {
+  if (command === "sp_bulkadd") {
     ensureSystem(data, userData);
 
     const names = content
-      .substring("sp_bulkadd ".length)
+      .substring(args[0].length)
       .split(/[,;]/)
       .map((name) => name.trim())
       .filter((name) => name.length > 0);
@@ -329,7 +510,7 @@ client.on("messageCreate", (message) => {
         systemId: userData.systemId,
       };
 
-      added.push(`[${id}] ${name}`);
+      added.push(`• **${name}**\n  ID: \`${id}\``);
     }
 
     saveData(data);
@@ -340,7 +521,11 @@ client.on("messageCreate", (message) => {
   }
 
   // MEMBERS
-  if (content === "sp_members") {
+  if (
+    command === "sp_members" ||
+    command === "sp_memberlist" ||
+    command === "sp_listmembers"
+  ) {
     return message.channel.send(
       `**${systemDisplayName(userData, username)} members:**\n${memberListText(
         userData
@@ -349,38 +534,41 @@ client.on("messageCreate", (message) => {
   }
 
   // RENAME MEMBER
-  if (content.startsWith("sp_rename ")) {
-    const args = content.split(" ");
-    const id = args[1];
+  if (command === "sp_rename") {
+    const target = args[1];
     const newName = args.slice(2).join(" ");
 
-    if (!id || !newName) {
-      return message.channel.send("Usage: `sp_rename <member ID> <new name>`");
+    if (!target || !newName) {
+      return message.channel.send(
+        "Usage: `sp_rename <member ID or name> <new name>`"
+      );
     }
 
-    if (!userData.members[id]) {
+    const found = findMember(userData, target);
+
+    if (!found) {
       return message.channel.send("Member not found.");
     }
 
-    const oldName = userData.members[id].name;
-    userData.members[id].name = newName;
+    const oldName = found.member.name;
+    found.member.name = newName;
 
     saveData(data);
 
-    return message.channel.send(`Renamed **${oldName}** to **${newName}**.`);
+    return message.channel.send(
+      `Renamed **${oldName}** to **${newName}**.\nID: \`${found.id}\``
+    );
   }
 
   // MEMBER ID LOOKUP
-  if (content.startsWith("sp_id ")) {
-    const search = content.substring("sp_id ".length).trim().toLowerCase();
+  if (command === "sp_id") {
+    const search = args.slice(1).join(" ");
 
     if (!search) {
       return message.channel.send("Usage: `sp_id <member name>`");
     }
 
-    const results = Object.entries(userData.members).filter(([, member]) =>
-      member.name.toLowerCase().includes(search)
-    );
+    const results = findMembers(userData, search);
 
     if (results.length === 0) {
       return message.channel.send("No matching members.");
@@ -397,16 +585,14 @@ client.on("messageCreate", (message) => {
   }
 
   // FIND MEMBER
-  if (content.startsWith("sp_find ")) {
-    const search = content.substring("sp_find ".length).trim().toLowerCase();
+  if (command === "sp_find") {
+    const search = args.slice(1).join(" ");
 
     if (!search) {
-      return message.channel.send("Usage: `sp_find <name>`");
+      return message.channel.send("Usage: `sp_find <member ID or name>`");
     }
 
-    const results = Object.entries(userData.members).filter(([, member]) =>
-      member.name.toLowerCase().includes(search)
-    );
+    const results = findMembers(userData, search);
 
     if (results.length === 0) {
       return message.channel.send("No matching members.");
@@ -414,35 +600,28 @@ client.on("messageCreate", (message) => {
 
     return message.channel.send(
       results
-        .map(([id, member]) => `[${id}] ${member.name} — ${member.points} points`)
+        .map(
+          ([id, member]) =>
+            `• **${member.name}** — ${member.points} points\n  ID: \`${id}\``
+        )
         .join("\n")
     );
   }
 
   // MEMBER INFO
-  if (content.startsWith("sp_memberinfo ")) {
-    const id = content.split(" ")[1];
+  if (command === "sp_member" || command === "sp_memberinfo") {
+    const target = args.slice(1).join(" ");
 
-    if (!id) {
-      return message.channel.send("Usage: `sp_memberinfo <member ID>`");
+    if (!target) {
+      return message.channel.send("Usage: `sp_member <member ID or name>`");
     }
 
-    if (!userData.members[id]) {
-      return message.channel.send("Member not found.");
-    }
-
-    const member = userData.members[id];
-
-    return message.channel.send(
-      `## ${member.name}\n\n` +
-        `**ID:** ${id}\n` +
-        `**Points:** ${member.points}\n` +
-        `**System:** ${systemDisplayName(userData, username)}`
-    );
+    const found = findMemberLookup(userData, target);
+    return memberLookupResponse(message, found, userData, username);
   }
 
   // LEADERBOARD
-  if (content === "sp_leaderboard") {
+  if (command === "sp_leaderboard") {
     return message.channel.send(
       `**${systemDisplayName(userData, username)} leaderboard:**\n${leaderboardText(
         userData
@@ -451,7 +630,7 @@ client.on("messageCreate", (message) => {
   }
 
   // RECENT POINT HISTORY
-  if (content === "sp_recent") {
+  if (command === "sp_recent" || command === "sp_history") {
     return message.channel.send(
       `**Recent point history for ${systemDisplayName(
         userData,
@@ -461,15 +640,14 @@ client.on("messageCreate", (message) => {
   }
 
   // GIVE POINTS TO ANOTHER SYSTEM'S MEMBER
-  if (content.startsWith("sp_givepoints ")) {
-    const args = content.split(" ");
+  if (command === "sp_givepoints") {
     const targetUser = message.mentions.users.first();
-    const id = args[2];
     const amount = Number(args[3]);
+    const targetMember = args[2];
 
-    if (!targetUser || !id || isNaN(amount)) {
+    if (!targetUser || !targetMember || isNaN(amount)) {
       return message.channel.send(
-        "Usage: `sp_givepoints @user <member ID> <amount>`"
+        "Usage: `sp_givepoints @user <member ID or name> <amount>`"
       );
     }
 
@@ -480,15 +658,17 @@ client.on("messageCreate", (message) => {
     const targetUserData = getUserData(data, targetUser.id);
     ensureSystem(data, targetUserData);
 
-    if (!targetUserData.members[id]) {
+    const found = findMember(targetUserData, targetMember);
+
+    if (!found) {
       return message.channel.send("That user's member was not found.");
     }
 
-    targetUserData.members[id].points += amount;
+    found.member.points += amount;
 
     addHistory(targetUserData, {
-      memberId: id,
-      memberName: targetUserData.members[id].name,
+      memberId: found.id,
+      memberName: found.member.name,
       change: amount,
       reason: `gifted by ${username}`,
     });
@@ -496,32 +676,37 @@ client.on("messageCreate", (message) => {
     saveData(data);
 
     return message.channel.send(
-      `${username} gave **${amount} points** to ${
-        targetUserData.members[id].name
-      } from **${systemDisplayName(targetUserData, targetUser.username)}**.\n` +
-        `${targetUserData.members[id].name} now has **${targetUserData.members[id].points} points**.`
+      `${username} gave **${amount} points** to **${found.member.name}** from **${systemDisplayName(
+        targetUserData,
+        targetUser.username
+      )}**.\n` +
+        `ID: \`${found.id}\`\n` +
+        `${found.member.name} now has **${found.member.points} points**.`
     );
   }
 
   // ADD POINTS
-  if (content.startsWith("sp_addpoints ")) {
-    const args = content.split(" ");
-    const id = args[1];
+  if (command === "sp_addpoints") {
+    const target = args[1];
     const amount = Number(args[2]);
 
-    if (!id || isNaN(amount)) {
-      return message.channel.send("Usage: `sp_addpoints <member ID> <amount>`");
+    if (!target || isNaN(amount)) {
+      return message.channel.send(
+        "Usage: `sp_addpoints <member ID or name> <amount>`"
+      );
     }
 
-    if (!userData.members[id]) {
+    const found = findMember(userData, target);
+
+    if (!found) {
       return message.channel.send("Member not found.");
     }
 
-    userData.members[id].points += amount;
+    found.member.points += amount;
 
     addHistory(userData, {
-      memberId: id,
-      memberName: userData.members[id].name,
+      memberId: found.id,
+      memberName: found.member.name,
       change: amount,
       reason: `added by ${username}`,
     });
@@ -529,31 +714,32 @@ client.on("messageCreate", (message) => {
     saveData(data);
 
     return message.channel.send(
-      `${username}'s ${userData.members[id].name} now has ${userData.members[id].points} points.`
+      `${username}'s **${found.member.name}** now has **${found.member.points} points**.\nID: \`${found.id}\``
     );
   }
 
   // REMOVE POINTS
-  if (content.startsWith("sp_removepoints ")) {
-    const args = content.split(" ");
-    const id = args[1];
+  if (command === "sp_removepoints") {
+    const target = args[1];
     const amount = Number(args[2]);
 
-    if (!id || isNaN(amount)) {
+    if (!target || isNaN(amount)) {
       return message.channel.send(
-        "Usage: `sp_removepoints <member ID> <amount>`"
+        "Usage: `sp_removepoints <member ID or name> <amount>`"
       );
     }
 
-    if (!userData.members[id]) {
+    const found = findMember(userData, target);
+
+    if (!found) {
       return message.channel.send("Member not found.");
     }
 
-    userData.members[id].points -= amount;
+    found.member.points -= amount;
 
     addHistory(userData, {
-      memberId: id,
-      memberName: userData.members[id].name,
+      memberId: found.id,
+      memberName: found.member.name,
       change: -amount,
       reason: `removed by ${username}`,
     });
@@ -561,30 +747,33 @@ client.on("messageCreate", (message) => {
     saveData(data);
 
     return message.channel.send(
-      `${username}'s ${userData.members[id].name} now has ${userData.members[id].points} points.`
+      `${username}'s **${found.member.name}** now has **${found.member.points} points**.\nID: \`${found.id}\``
     );
   }
 
   // SET POINTS
-  if (content.startsWith("sp_setpoints ")) {
-    const args = content.split(" ");
-    const id = args[1];
+  if (command === "sp_setpoints") {
+    const target = args[1];
     const amount = Number(args[2]);
 
-    if (!id || isNaN(amount)) {
-      return message.channel.send("Usage: `sp_setpoints <member ID> <amount>`");
+    if (!target || isNaN(amount)) {
+      return message.channel.send(
+        "Usage: `sp_setpoints <member ID or name> <amount>`"
+      );
     }
 
-    if (!userData.members[id]) {
+    const found = findMember(userData, target);
+
+    if (!found) {
       return message.channel.send("Member not found.");
     }
 
-    const oldPoints = userData.members[id].points;
-    userData.members[id].points = amount;
+    const oldPoints = found.member.points;
+    found.member.points = amount;
 
     addHistory(userData, {
-      memberId: id,
-      memberName: userData.members[id].name,
+      memberId: found.id,
+      memberName: found.member.name,
       change: amount - oldPoints,
       reason: `set by ${username}`,
     });
@@ -592,28 +781,32 @@ client.on("messageCreate", (message) => {
     saveData(data);
 
     return message.channel.send(
-      `${username}'s ${userData.members[id].name} now has ${amount} points.`
+      `${username}'s **${found.member.name}** now has **${amount} points**.\nID: \`${found.id}\``
     );
   }
 
   // RESET POINTS
-  if (content.startsWith("sp_resetpoints ")) {
-    const id = content.split(" ")[1];
+  if (command === "sp_resetpoints") {
+    const target = args.slice(1).join(" ");
 
-    if (!id) {
-      return message.channel.send("Usage: `sp_resetpoints <member ID>`");
+    if (!target) {
+      return message.channel.send(
+        "Usage: `sp_resetpoints <member ID or name>`"
+      );
     }
 
-    if (!userData.members[id]) {
+    const found = findMember(userData, target);
+
+    if (!found) {
       return message.channel.send("Member not found.");
     }
 
-    const oldPoints = userData.members[id].points;
-    userData.members[id].points = 0;
+    const oldPoints = found.member.points;
+    found.member.points = 0;
 
     addHistory(userData, {
-      memberId: id,
-      memberName: userData.members[id].name,
+      memberId: found.id,
+      memberName: found.member.name,
       change: -oldPoints,
       reason: `reset by ${username}`,
     });
@@ -621,25 +814,28 @@ client.on("messageCreate", (message) => {
     saveData(data);
 
     return message.channel.send(
-      `${userData.members[id].name}'s points have been reset.`
+      `**${found.member.name}**'s points have been reset.\nID: \`${found.id}\``
     );
   }
 
   // CHECK POINTS
-  if (content.startsWith("sp_checkpoints ")) {
-    const args = content.split(" ");
-    const id = args[1];
+  if (command === "sp_checkpoints") {
+    const target = args.slice(1).join(" ");
 
-    if (!id) {
-      return message.channel.send("Usage: `sp_checkpoints <member ID>`");
+    if (!target) {
+      return message.channel.send(
+        "Usage: `sp_checkpoints <member ID or name>`"
+      );
     }
 
-    if (!userData.members[id]) {
+    const found = findMember(userData, target);
+
+    if (!found) {
       return message.channel.send("Member not found.");
     }
 
     return message.channel.send(
-      `${username}'s ${userData.members[id].name} has ${userData.members[id].points} points.`
+      `${username}'s **${found.member.name}** has **${found.member.points} points**.\nID: \`${found.id}\``
     );
   }
 
@@ -647,181 +843,197 @@ client.on("messageCreate", (message) => {
   // CHORES
   // =====================
 
-  // ADD CHORE
-  if (content.startsWith("sp_chore add ")) {
-    const args = content.split(" ");
-    const points = Number(args[2]);
-    const name = args.slice(3).join(" ");
+  if (command === "sp_chore") {
+    const subcommand = normalize(args[1]);
 
-    if (isNaN(points) || points <= 0 || !name) {
-      return message.channel.send("Usage: `sp_chore add <points> <chore>`");
-    }
+    // ADD CHORE
+    if (subcommand === "add") {
+      const points = Number(args[2]);
+      const name = args.slice(3).join(" ");
 
-    ensureSystem(data, userData);
+      if (isNaN(points) || points <= 0 || !name) {
+        return message.channel.send("Usage: `sp_chore add <points> <chore>`");
+      }
 
-    let id;
-    do {
-      id = generateId(4);
-    } while (userData.chores[id]);
+      ensureSystem(data, userData);
 
-    userData.chores[id] = {
-      name,
-      points,
-      systemId: userData.systemId,
-    };
+      let id;
+      do {
+        id = generateId(4);
+      } while (userData.chores[id]);
 
-    saveData(data);
+      userData.chores[id] = {
+        name,
+        points,
+        systemId: userData.systemId,
+      };
 
-    return message.channel.send(
-      `Added chore:\n[${id}] ${name} — ${points} points`
-    );
-  }
+      saveData(data);
 
-  // LIST CHORES
-  if (content === "sp_chore list") {
-    return message.channel.send(
-      `**${systemDisplayName(userData, username)} chores:**\n${choreListText(
-        userData
-      )}`
-    );
-  }
-
-  // FINISH CHORE
-  if (content.startsWith("sp_chore finish ")) {
-    const args = content.split(" ");
-
-    const choreId = args[2];
-    const memberId = args[3];
-
-    if (!choreId || !memberId) {
       return message.channel.send(
-        "Usage: `sp_chore finish <chore ID> <member ID>`"
+        `Added chore:\n**${name}** — ${points} points\nID: \`${id}\``
       );
     }
 
-    if (!userData.chores[choreId]) {
-      return message.channel.send("Chore not found.");
-    }
-
-    if (!userData.members[memberId]) {
-      return message.channel.send("Member not found.");
-    }
-
-    const chore = userData.chores[choreId];
-    const member = userData.members[memberId];
-
-    member.points += chore.points;
-
-    addHistory(userData, {
-      memberId,
-      memberName: member.name,
-      change: chore.points,
-      reason: `completed chore: ${chore.name}`,
-    });
-
-    saveData(data);
-
-    return message.channel.send(
-      `${member.name} completed **${chore.name}**!\n+${chore.points} SysPoints\n\n${member.name} now has ${member.points} points.`
-    );
-  }
-
-  // RENAME CHORE
-  if (content.startsWith("sp_chore rename ")) {
-    const args = content.split(" ");
-    const id = args[2];
-    const name = args.slice(3).join(" ");
-
-    if (!id || !name) {
+    // LIST CHORES
+    if (subcommand === "list") {
       return message.channel.send(
-        "Usage: `sp_chore rename <chore ID> <new name>`"
+        `**${systemDisplayName(userData, username)} chores:**\n${choreListText(
+          userData
+        )}`
       );
     }
 
-    if (!userData.chores[id]) {
-      return message.channel.send("Chore not found.");
-    }
+    // FINISH CHORE
+    if (subcommand === "finish") {
+      const choreIdInput = args[2];
+      const memberInput = args.slice(3).join(" ");
 
-    const oldName = userData.chores[id].name;
-    userData.chores[id].name = name;
+      if (!choreIdInput || !memberInput) {
+        return message.channel.send(
+          "Usage: `sp_chore finish <chore ID> <member ID or name>`"
+        );
+      }
 
-    saveData(data);
+      const foundChore = findChore(userData, choreIdInput);
 
-    return message.channel.send(`Renamed **${oldName}** to **${name}**.`);
-  }
+      if (!foundChore) {
+        return message.channel.send("Chore not found.");
+      }
 
-  // EDIT CHORE POINTS
-  if (content.startsWith("sp_chore editpoints ")) {
-    const args = content.split(" ");
+      const foundMember = findMember(userData, memberInput);
 
-    const id = args[2];
-    const points = Number(args[3]);
+      if (!foundMember) {
+        return message.channel.send("Member not found.");
+      }
 
-    if (!id || isNaN(points)) {
+      foundMember.member.points += foundChore.chore.points;
+
+      addHistory(userData, {
+        memberId: foundMember.id,
+        memberName: foundMember.member.name,
+        change: foundChore.chore.points,
+        reason: `completed chore: ${foundChore.chore.name}`,
+      });
+
+      saveData(data);
+
       return message.channel.send(
-        "Usage: `sp_chore editpoints <chore ID> <points>`"
+        `**${foundMember.member.name}** completed **${foundChore.chore.name}**!\n` +
+          `+${foundChore.chore.points} SysPoints\n\n` +
+          `${foundMember.member.name} now has **${foundMember.member.points} points**.\n` +
+          `Member ID: \`${foundMember.id}\`\n` +
+          `Chore ID: \`${foundChore.id}\``
       );
     }
 
-    if (!userData.chores[id]) {
-      return message.channel.send("Chore not found.");
+    // RENAME CHORE
+    if (subcommand === "rename") {
+      const choreIdInput = args[2];
+      const name = args.slice(3).join(" ");
+
+      if (!choreIdInput || !name) {
+        return message.channel.send(
+          "Usage: `sp_chore rename <chore ID> <new name>`"
+        );
+      }
+
+      const foundChore = findChore(userData, choreIdInput);
+
+      if (!foundChore) {
+        return message.channel.send("Chore not found.");
+      }
+
+      const oldName = foundChore.chore.name;
+      foundChore.chore.name = name;
+
+      saveData(data);
+
+      return message.channel.send(
+        `Renamed **${oldName}** to **${name}**.\nID: \`${foundChore.id}\``
+      );
     }
 
-    userData.chores[id].points = points;
+    // EDIT CHORE POINTS
+    if (subcommand === "editpoints") {
+      const choreIdInput = args[2];
+      const points = Number(args[3]);
 
-    saveData(data);
+      if (!choreIdInput || isNaN(points)) {
+        return message.channel.send(
+          "Usage: `sp_chore editpoints <chore ID> <points>`"
+        );
+      }
 
-    return message.channel.send(
-      `${userData.chores[id].name} is now worth **${points}** points.`
-    );
-  }
+      const foundChore = findChore(userData, choreIdInput);
 
-  // DELETE CHORE
-  if (content.startsWith("sp_chore delete ")) {
-    const args = content.split(" ");
+      if (!foundChore) {
+        return message.channel.send("Chore not found.");
+      }
 
-    const choreId = args[2];
+      foundChore.chore.points = points;
 
-    if (!choreId) {
-      return message.channel.send("Usage: `sp_chore delete <chore ID>`");
+      saveData(data);
+
+      return message.channel.send(
+        `**${foundChore.chore.name}** is now worth **${points}** points.\nID: \`${foundChore.id}\``
+      );
     }
 
-    if (!userData.chores[choreId]) {
-      return message.channel.send("Chore not found.");
+    // DELETE CHORE
+    if (subcommand === "delete") {
+      const choreIdInput = args[2];
+
+      if (!choreIdInput) {
+        return message.channel.send("Usage: `sp_chore delete <chore ID>`");
+      }
+
+      const foundChore = findChore(userData, choreIdInput);
+
+      if (!foundChore) {
+        return message.channel.send("Chore not found.");
+      }
+
+      const deletedName = foundChore.chore.name;
+
+      delete userData.chores[foundChore.id];
+
+      saveData(data);
+
+      return message.channel.send(
+        `Deleted chore **${deletedName}**.\nID: \`${foundChore.id}\``
+      );
     }
-
-    const deletedName = userData.chores[choreId].name;
-
-    delete userData.chores[choreId];
-
-    saveData(data);
-
-    return message.channel.send(`Deleted chore **${deletedName}**.`);
   }
 
   // DELETE MEMBER
-  if (content.startsWith("sp_deletemember ")) {
-    const args = content.split(" ");
-    const id = args[1];
+  if (command === "sp_deletemember" || command === "sp_removemember") {
+    const target = args.slice(1).join(" ");
 
-    if (!id) {
-      return message.channel.send("Usage: `sp_deletemember <member ID>`");
+    if (!target) {
+      return message.channel.send(
+        "Usage: `sp_deletemember <member ID or name>`"
+      );
     }
 
-    if (!userData.members[id]) {
+    const found = findMember(userData, target);
+
+    if (!found) {
       return message.channel.send("Member not found.");
     }
 
-    const deletedName = userData.members[id].name;
-    delete userData.members[id];
+    const deletedName = found.member.name;
+    delete userData.members[found.id];
 
     saveData(data);
 
-    return message.channel.send(`Deleted ${deletedName} from ${username}'s system.`);
+    return message.channel.send(
+      `Deleted **${deletedName}** from ${username}'s system.\nID: \`${found.id}\``
+    );
   }
 
   // PURGE
-  if (content === "sp_purge") {
+  if (command === "sp_purge") {
     pendingPurge[message.author.id] = true;
 
     return message.channel.send(
@@ -830,7 +1042,7 @@ client.on("messageCreate", (message) => {
   }
 
   // CONFIRM PURGE
-  if (content === "sp_confirm purge") {
+  if (command === "sp_confirm" && normalize(args[1]) === "purge") {
     if (!pendingPurge[message.author.id]) {
       return message.channel.send("No purge is pending.");
     }
