@@ -25,7 +25,7 @@ const client = new Client({
 });
 
 // syspoints @ dreamibun05
-// beta build 0.2.2
+// beta build 0.2.3
 // last updated fri jun 26th
 
 // =====================
