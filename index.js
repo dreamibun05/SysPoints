@@ -145,16 +145,19 @@ client.on("messageCreate", (message) => {
   if (content === "sp_help" || content === "sp_commands") {
     return message.channel.send(
       "**SysPoints Commands:**\n" +
+      + "*System management*" +
         "`sp_createsystem <system name>`\n" +
         "`sp_system`\n" +
         "`sp_addmember <name>`\n" +
         "`sp_members`\n" +
+        "*Points management*" +
         "`sp_addpoints <member ID> <amount>`\n" +
         "`sp_removepoints <member ID> <amount>`\n" +
         "`sp_setpoints <member ID> <amount>`\n" +
         "`sp_checkpoints <member ID>`\n" +
         "`sp_givepoints @user <member ID> <amount>`\n" +
         "`sp_leaderboard`\n" +
+        "*Danger zone!*" +
         "`sp_deletemember <member ID>`\n" +
         "`sp_purge`\n"
     );
