@@ -119,7 +119,9 @@ function findMember(userData, input) {
   const search = normalize(input);
   if (!search) return null;
 
-  const entries = Object.entries(userData.members);
+  const entries = Object.entries(userData.members).sort((a, b) =>
+  a[1].name.localeCompare(b[1].name)
+);
 
   let exact = entries.find(([id]) => normalize(id) === search);
   if (exact) return { id: exact[0], member: exact[1] };
