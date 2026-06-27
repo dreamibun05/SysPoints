@@ -144,22 +144,23 @@ client.on("messageCreate", (message) => {
   // HELP
   if (content === "sp_help" || content === "sp_commands") {
     return message.channel.send(
-      "**SysPoints Commands:**\n" +
-      + "*System management*" +
+      "## SysPoints Commands:\n" +
+      "**System management**\n" +
         "`sp_createsystem <system name>`\n" +
         "`sp_system`\n" +
         "`sp_addmember <name>`\n" +
         "`sp_members`\n" +
-        "*Points management*" +
+        "**Points management**\n" +
         "`sp_addpoints <member ID> <amount>`\n" +
         "`sp_removepoints <member ID> <amount>`\n" +
         "`sp_setpoints <member ID> <amount>`\n" +
         "`sp_checkpoints <member ID>`\n" +
         "`sp_givepoints @user <member ID> <amount>`\n" +
         "`sp_leaderboard`\n" +
-        "*Danger zone!*" +
+        "***Danger zone!***\n" +
         "`sp_deletemember <member ID>`\n" +
-        "`sp_purge`\n"
+        "`sp_purge`\n" +
+        "*Note! Both sp_help and sp_commands work to access this menu at any time!*"
     );
   }
 
