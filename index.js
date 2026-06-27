@@ -60,6 +60,7 @@ function getUserData(data, discordUserId) {
       systemId: null,
       systemName: null,
       members: {},
+      chores: {},
     };
   }
 
@@ -67,6 +68,7 @@ function getUserData(data, discordUserId) {
 
   // migration for older data
   if (!userData.members) userData.members = {};
+  if (!userData.chores) userData.chores = {};
   if (!("systemId" in userData)) userData.systemId = null;
   if (!("systemName" in userData)) userData.systemName = null;
 
@@ -123,6 +125,18 @@ function leaderboardText(userData) {
     .join("\n");
 }
 
+function choreListText(userData) {
+  const entries = Object.entries(userData.chores);
+
+  if (entries.length === 0) {
+    return "No chores yet.";
+  }
+
+  return entries
+    .map(([id, chore]) => `[${id}] ${chore.name} — ${chore.points} points`)
+    .join("\n");
+}
+
 // =====================
 // READY
 // =====================
@@ -157,6 +171,11 @@ client.on("messageCreate", (message) => {
         "`sp_checkpoints <member ID>`\n" +
         "`sp_givepoints @user <member ID> <amount>`\n" +
         "`sp_leaderboard`\n" +
+        "**Chores**\n" +
+        "`sp_chore add <points> <chore>`\n" +
+        "`sp_chore list`\n" +
+        "`sp_chore finish <chore ID> <member ID>`\n" +
+        "`sp_chore delete <chore ID>`\n" +
         "***Danger zone!***\n" +
         "`sp_deletemember <member ID>`\n" +
         "`sp_purge`\n" +
@@ -343,6 +362,109 @@ client.on("messageCreate", (message) => {
     );
   }
 
+    // =====================
+  // CHORES
+  // =====================
+
+// ADD CHORE
+  if (content.startsWith("sp_chore add ")) {
+   const args = content.split(" ");
+    const points = Number(args[2]);
+    const name = args.slice(3).join(" ");
+
+   if (isNaN(points) || points <= 0 || !name) {
+      return message.channel.send(
+        "Usage: `sp_chore add <points> <chore>`"
+      );
+    }
+
+    ensureSystem(data, userData);
+
+    let id;
+    do {
+      id = generateId(4);
+    } while (userData.chores[id]);
+
+    userData.chores[id] = {
+      name,
+      points,
+      systemId: userData.systemId,
+   };
+
+    saveData(data);
+
+    return message.channel.send(
+      `Added chore:\n[${id}] ${name} — ${points} points`
+    );
+  }
+
+// LIST CHORES
+  if (content === "sp_chore list") {
+    return message.channel.send(
+      `**${systemDisplayName(userData, username)} chores:**\n${choreListText(userData)}`
+    );  
+  }
+
+// FINISH CHORE
+  if (content.startsWith("sp_chore finish ")) {
+    const args = content.split(" ");
+
+    const choreId = args[2];
+    const memberId = args[3];
+
+    if (!choreId || !memberId) {
+      return message.channel.send(
+       "Usage: `sp_chore finish <chore ID> <member ID>`"
+      );
+    }
+
+    if (!userData.chores[choreId]) {
+      return message.channel.send("Chore not found.");
+    }
+
+    if (!userData.members[memberId]) {
+      return message.channel.send("Member not found.");
+    }
+
+    const chore = userData.chores[choreId];
+    const member = userData.members[memberId];
+
+    member.points += chore.points;
+
+    saveData(data);
+
+  return message.channel.send(
+    `${member.name} completed **${chore.name}**!\n+${chore.points} SysPoints\n\n${member.name} now has ${member.points} points.`
+  );
+}
+
+// DELETE CHORE
+  if (content.startsWith("sp_chore delete ")) {
+    const args = content.split(" ");
+
+    const choreId = args[2];
+
+    if (!choreId) {
+      return message.channel.send(
+        "Usage: `sp_chore delete <chore ID>`"
+      );
+    }
+
+    if (!userData.chores[choreId]) {
+     return message.channel.send("Chore not found.");
+    }
+
+    const deletedName = userData.chores[choreId].name;
+
+    delete userData.chores[choreId];
+
+    saveData(data);
+
+    return message.channel.send(
+      `Deleted chore **${deletedName}**.`
+    );
+  }
+
   // DELETE MEMBER
   if (content.startsWith("sp_deletemember ")) {
     const args = content.split(" ");
@@ -381,6 +503,7 @@ client.on("messageCreate", (message) => {
       systemId: null,
       systemName: null,
       members: {},
+      chores: {},
     };
 
     pendingPurge[message.author.id] = false;
