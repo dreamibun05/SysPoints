@@ -142,7 +142,7 @@ client.on("messageCreate", (message) => {
   const content = message.content.trim();
 
   // HELP
-  if (content === "sp_help") {
+  if (content === "sp_help" || content === "sp_commands") {
     return message.channel.send(
       "**SysPoints Commands:**\n" +
         "`sp_createsystem <system name>`\n" +
