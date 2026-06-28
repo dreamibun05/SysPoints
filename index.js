@@ -25,8 +25,8 @@ const client = new Client({
 });
 
 // syspoints @ dreamibun05
-// beta build 0.2.3
-// last updated fri jun 26th
+// beta build 0.2.4
+// last updated sun jun 27th
 
 // =====================
 // DATA
@@ -115,13 +115,56 @@ function normalize(text) {
   return String(text || "").trim().toLowerCase();
 }
 
+function sortEntriesByName(entries) {
+  return entries.sort((a, b) =>
+    a[1].name.localeCompare(b[1].name, undefined, { sensitivity: "base" })
+  );
+}
+
+function sortedMembers(userData) {
+  return sortEntriesByName(Object.entries(userData.members));
+}
+
+function sortedChores(userData) {
+  return sortEntriesByName(Object.entries(userData.chores));
+}
+
+function getPage(args, defaultPage = 1) {
+  const lastArg = args[args.length - 1];
+  const page = Number(lastArg);
+
+  if (!Number.isInteger(page) || page < 1) return defaultPage;
+  return page;
+}
+
+function paginate(entries, page = 1, pageSize = 15) {
+  const totalItems = entries.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(Math.max(page, 1), totalPages);
+  const start = (safePage - 1) * pageSize;
+
+  return {
+    page: safePage,
+    totalPages,
+    totalItems,
+    items: entries.slice(start, start + pageSize),
+  };
+}
+
+function pageHint(commandName, page, totalPages) {
+  if (totalPages <= 1) return "";
+
+  const next = page < totalPages ? `\nNext: ` + `\`${commandName} ${page + 1}\`` : "";
+  const prev = page > 1 ? `\nPrevious: ` + `\`${commandName} ${page - 1}\`` : "";
+
+  return `\n\nPage **${page}/${totalPages}**${prev}${next}`;
+}
+
 function findMember(userData, input) {
   const search = normalize(input);
   if (!search) return null;
 
-  const entries = Object.entries(userData.members).sort((a, b) =>
-  a[1].name.localeCompare(b[1].name)
-);
+  const entries = sortedMembers(userData);
 
   let exact = entries.find(([id]) => normalize(id) === search);
   if (exact) return { id: exact[0], member: exact[1] };
@@ -144,7 +187,7 @@ function findMembers(userData, input) {
   const search = normalize(input);
   if (!search) return [];
 
-  return Object.entries(userData.members).filter(([id, member]) => {
+  return sortedMembers(userData).filter(([id, member]) => {
     return normalize(id) === search || normalize(member.name).includes(search);
   });
 }
@@ -162,24 +205,32 @@ function findChore(userData, input) {
   return { id: entry[0], chore: entry[1] };
 }
 
-function memberListText(userData) {
-  const entries = Object.entries(userData.members);
+function memberListText(userData, page = 1) {
+  const entries = sortedMembers(userData);
 
   if (entries.length === 0) return "No members yet.";
 
-  return entries
-    .map(([id, member]) => `[\`${id}\`] ${member.name} — ${member.points} points`)
-    .join("\n");
+  const pageData = paginate(entries, page, 15);
+
+  return (
+    pageData.items
+      .map(([id, member]) => `[` + `\`${id}\`` + `] ${member.name} — ${member.points} points`)
+      .join("\n") + pageHint("sp_members", pageData.page, pageData.totalPages)
+  );
 }
 
-function choreListText(userData) {
-  const entries = Object.entries(userData.chores);
+function choreListText(userData, page = 1) {
+  const entries = sortedChores(userData);
 
   if (entries.length === 0) return "No chores yet.";
 
-  return entries
-    .map(([id, chore]) => `[\`${id}\`] ${chore.name} — ${chore.points} points`)
-    .join("\n");
+  const pageData = paginate(entries, page, 15);
+
+  return (
+    pageData.items
+      .map(([id, chore]) => `[` + `\`${id}\`` + `] ${chore.name} — ${chore.points} points`)
+      .join("\n") + pageHint("sp_chore list", pageData.page, pageData.totalPages)
+  );
 }
 
 function addHistory(userData, entry) {
@@ -191,41 +242,55 @@ function addHistory(userData, entry) {
   userData.history = userData.history.slice(0, 25);
 }
 
-function recentHistoryText(userData) {
+function recentHistoryText(userData, page = 1) {
   if (!userData.history || userData.history.length === 0) {
     return "No recent point history yet.";
   }
 
-  return userData.history
-    .slice(0, 10)
-    .map((entry) => {
-      return `• **${entry.memberName}** ${
-        entry.change > 0 ? "gained" : "lost"
-      } **${Math.abs(entry.change)}** points — ${entry.reason}`;
-    })
-    .join("\n");
+  const entries = userData.history.map((entry) => [entry.date, entry]);
+  const pageData = paginate(entries, page, 10);
+
+  return (
+    pageData.items
+      .map(([, entry]) => {
+        return `• **${entry.memberName}** ${
+          entry.change > 0 ? "gained" : "lost"
+        } **${Math.abs(entry.change)}** points — ${entry.reason}`;
+      })
+      .join("\n") + pageHint("sp_recent", pageData.page, pageData.totalPages)
+  );
 }
 
-function leaderboardText(userData) {
+function leaderboardText(userData, page = 1) {
   const entries = Object.entries(userData.members);
 
   if (entries.length === 0) return "No members yet.";
 
-  return entries
-    .sort((a, b) => b[1].points - a[1].points)
-    .map(([id, member], index) => {
-      const medal =
-        index === 0
-          ? "🥇"
-          : index === 1
-          ? "🥈"
-          : index === 2
-          ? "🥉"
-          : `${index + 1}.`;
+  const ranked = entries.sort((a, b) => {
+    const pointDiff = b[1].points - a[1].points;
+    if (pointDiff !== 0) return pointDiff;
+    return a[1].name.localeCompare(b[1].name, undefined, { sensitivity: "base" });
+  });
 
-      return `${medal} **${member.name}** — ${member.points} points\nID: \`${id}\``;
-    })
-    .join("\n");
+  const pageData = paginate(ranked, page, 10);
+
+  return (
+    pageData.items
+      .map(([id, member], localIndex) => {
+        const index = (pageData.page - 1) * 10 + localIndex;
+        const medal =
+          index === 0
+            ? "🥇"
+            : index === 1
+            ? "🥈"
+            : index === 2
+            ? "🥉"
+            : `${index + 1}.`;
+
+        return `${medal} **${member.name}** — ${member.points} points\nID: ` + `\`${id}\``;
+      })
+      .join("\n") + pageHint("sp_leaderboard", pageData.page, pageData.totalPages)
+  );
 }
 
 function levenshtein(a, b) {
@@ -369,41 +434,68 @@ client.on("messageCreate", (message) => {
   const command = normalize(args[0]);
 
   // HELP
-  if (command === "sp_help" || command === "sp_commands") {
-    return message.channel.send(
-      "## SysPoints Commands:\n" +
-        "**System management**\n" +
-        "`sp_createsystem <system name>`\n" +
-        "`sp_system`\n" +
-        "`sp_systemrename <new name>`\n" +
-        "`sp_addmember <name>`\n" +
-        "`sp_bulkadd <name1>, <name2>, <name3>`\n" +
-        "`sp_members`\n" +
-        "`sp_rename <member ID or name> <new name>`\n" +
-        "`sp_find <member ID or name>`\n" +
-        "`sp_id <member name>`\n" +
-        "`sp_memberinfo <member ID or name>`\n" +
-        "**Points management**\n" +
+  if (command === "sp_help" || command === "sp_commands" || command === "sp_cmds") {
+    const category = normalize(args[1] || "all");
+
+    const helpPages = {
+      system:
+        "## SysPoints Help: System\n" +
+        "`sp_createsystem <system name>` — create/name your system\n" +
+        "`sp_system` — view your system profile\n" +
+        "`sp_systemrename <new name>` — rename your system",
+
+      members:
+        "## SysPoints Help: Members\n" +
+        "`sp_addmember <name>` — add one member\n" +
+        "`sp_bulkadd <name1>, <name2>, <name3>` — add many members\n" +
+        "`sp_members [page]` — alphabetized member list\n" +
+        "Aliases: `sp_memberlist`, `sp_listmembers`\n" +
+        "`sp_rename <member ID or name> <new name>` — rename member\n" +
+        "`sp_find <member ID or name>` — search members\n" +
+        "`sp_id <member name>` — find a member ID\n" +
+        "`sp_member <member ID or name>` — member info\n" +
+        "Alias: `sp_memberinfo`",
+
+      points:
+        "## SysPoints Help: Points\n" +
         "`sp_addpoints <member ID or name> <amount>`\n" +
         "`sp_removepoints <member ID or name> <amount>`\n" +
         "`sp_setpoints <member ID or name> <amount>`\n" +
         "`sp_resetpoints <member ID or name>`\n" +
         "`sp_checkpoints <member ID or name>`\n" +
         "`sp_givepoints @user <member ID or name> <amount>`\n" +
-        "`sp_leaderboard`\n" +
-        "`sp_recent`\n" +
-        "**Chores**\n" +
+        "`sp_leaderboard [page]` — ranked points list\n" +
+        "`sp_recent [page]` — recent point history\n" +
+        "Alias: `sp_history`",
+
+      chores:
+        "## SysPoints Help: Chores\n" +
         "`sp_chore add <points> <chore>`\n" +
-        "`sp_chore list`\n" +
+        "`sp_chore list [page]` — alphabetized chore list\n" +
         "`sp_chore finish <chore ID> <member ID or name>`\n" +
         "`sp_chore rename <chore ID> <new name>`\n" +
         "`sp_chore editpoints <chore ID> <points>`\n" +
-        "`sp_chore delete <chore ID>`\n" +
-        "***Danger zone!***\n" +
+        "`sp_chore delete <chore ID>`",
+
+      danger:
+        "## SysPoints Help: Danger Zone\n" +
         "`sp_deletemember <member ID or name>`\n" +
-        "`sp_removemember <member ID or name>`\n" +
-        "`sp_purge`\n" +
-        "*Note! Commands are not case-sensitive.*"
+        "Alias: `sp_removemember`\n" +
+        "`sp_purge` — start full wipe confirmation\n" +
+        "`sp_confirm purge` — confirm full wipe",
+    };
+
+    if (helpPages[category]) {
+      return message.channel.send(helpPages[category]);
+    }
+
+    return message.channel.send(
+      "## SysPoints Help\n" +
+        "Use `sp_help <category>` for a shorter page.\n\n" +
+        "**Categories:** `system`, `members`, `points`, `chores`, `danger`\n" +
+        "**Aliases:** `sp_commands`, `sp_cmds`\n\n" +
+        "Most list commands support pages, like `sp_members 2` or `sp_leaderboard 3`.\n" +
+        "Commands are not case-sensitive."
     );
   }
 
@@ -517,8 +609,11 @@ client.on("messageCreate", (message) => {
 
     saveData(data);
 
+    const preview = added.slice(0, 20).join("\n");
+    const extra = added.length > 20 ? `\n\n…and **${added.length - 20}** more. Use ` + "`sp_members`" + " to view the full alphabetized list." : "";
+
     return message.channel.send(
-      `Added **${added.length}** members:\n\n${added.join("\n")}`
+      `Added **${added.length}** members:\n\n${preview}${extra}`
     );
   }
 
@@ -528,9 +623,12 @@ client.on("messageCreate", (message) => {
     command === "sp_memberlist" ||
     command === "sp_listmembers"
   ) {
+    const page = getPage(args.slice(1));
+
     return message.channel.send(
       `**${systemDisplayName(userData, username)} members:**\n${memberListText(
-        userData
+        userData,
+        page
       )}`
     );
   }
@@ -624,20 +722,25 @@ client.on("messageCreate", (message) => {
 
   // LEADERBOARD
   if (command === "sp_leaderboard") {
+    const page = getPage(args.slice(1));
+
     return message.channel.send(
       `**${systemDisplayName(userData, username)} leaderboard:**\n${leaderboardText(
-        userData
+        userData,
+        page
       )}`
     );
   }
 
   // RECENT POINT HISTORY
   if (command === "sp_recent" || command === "sp_history") {
+    const page = getPage(args.slice(1));
+
     return message.channel.send(
       `**Recent point history for ${systemDisplayName(
         userData,
         username
-      )}:**\n${recentHistoryText(userData)}`
+      )}:**\n${recentHistoryText(userData, page)}`
     );
   }
 
@@ -845,7 +948,10 @@ client.on("messageCreate", (message) => {
   // CHORES
   // =====================
 
-  if (command === "sp_chore") {
+  if (
+	command === "sp_chore" ||
+	command === "sp_chores"
+) {
     const subcommand = normalize(args[1]);
 
     // ADD CHORE
@@ -879,9 +985,12 @@ client.on("messageCreate", (message) => {
 
     // LIST CHORES
     if (subcommand === "list") {
+      const page = getPage(args.slice(2));
+
       return message.channel.send(
         `**${systemDisplayName(userData, username)} chores:**\n${choreListText(
-          userData
+          userData,
+          page
         )}`
       );
     }
