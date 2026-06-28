@@ -25,7 +25,7 @@ const client = new Client({
 });
 
 // syspoints @ dreamibun05
-// beta build 0.2.4
+// beta build 0.2.5
 // last updated sun jun 27th
 
 // =====================
@@ -442,25 +442,32 @@ client.on("messageCreate", (message) => {
         "## SysPoints Help: System\n" +
         "`sp_createsystem <system name>` — create/name your system\n" +
         "`sp_system` — view your system profile\n" +
-        "`sp_systemrename <new name>` — rename your system",
+        "`sp_systemrename <new name>` — rename your system\n" +
+        "Alias: `sp_sn`",
 
       members:
         "## SysPoints Help: Members\n" +
         "`sp_addmember <name>` — add one member\n" +
+        "Alias: `sp_am`\n" +
         "`sp_bulkadd <name1>, <name2>, <name3>` — add many members\n" +
+        "Alias: `sp_ba`\n" +
         "`sp_members [page]` — alphabetized member list\n" +
         "Aliases: `sp_memberlist`, `sp_listmembers`\n" +
         "`sp_rename <member ID or name> <new name>` — rename member\n" +
-        "`sp_find <member ID or name>` — search members\n" +
-        "`sp_id <member name>` — find a member ID\n" +
+        "Alias: `sp_rm`\n" +
+        "`sp_id <member name or ID>` — find a member ID\n" +
+        "Alias: `sp_find`\n" +
         "`sp_member <member ID or name>` — member info\n" +
         "Alias: `sp_memberinfo`",
 
       points:
         "## SysPoints Help: Points\n" +
-        "`sp_addpoints <member ID or name> <amount>`\n" +
-        "`sp_removepoints <member ID or name> <amount>`\n" +
-        "`sp_setpoints <member ID or name> <amount>`\n" +
+        "`sp_addpoints <member ID or name> <amount>` — add points\n" +
+        "Alias: `sp_ap`\n" +
+        "`sp_removepoints <member ID or name> <amount>` — remove points\n" +
+        "Alias: `sp_rp`\n" +
+        "`sp_setpoints <member ID or name> <amount>` — set points\n" +
+        "Alias: `sp_sp`\n" +
         "`sp_resetpoints <member ID or name>`\n" +
         "`sp_checkpoints <member ID or name>`\n" +
         "`sp_givepoints @user <member ID or name> <amount>`\n" +
@@ -471,6 +478,7 @@ client.on("messageCreate", (message) => {
       chores:
         "## SysPoints Help: Chores\n" +
         "`sp_chore add <points> <chore>`\n" +
+        "Alias: `sp_chores`\n" +
         "`sp_chore list [page]` — alphabetized chore list\n" +
         "`sp_chore finish <chore ID> <member ID or name>`\n" +
         "`sp_chore rename <chore ID> <new name>`\n" +
@@ -531,7 +539,7 @@ client.on("messageCreate", (message) => {
   }
 
   // RENAME SYSTEM
-  if (command === "sp_systemrename") {
+  if (command === "sp_systemrename" || command === "sp_sn") {
     const name = args.slice(1).join(" ");
 
     if (!name) {
@@ -547,7 +555,7 @@ client.on("messageCreate", (message) => {
   }
 
   // ADD MEMBER
-  if (command === "sp_addmember") {
+  if (command === "sp_addmember" || command === "sp_am") {
     const name = args.slice(1).join(" ");
 
     if (!name) {
@@ -576,7 +584,7 @@ client.on("messageCreate", (message) => {
   }
 
   // BULK ADD MEMBERS
-  if (command === "sp_bulkadd") {
+  if (command === "sp_bulkadd" || command === "sp_ba") {
     ensureSystem(data, userData);
 
     const names = content
@@ -634,7 +642,7 @@ client.on("messageCreate", (message) => {
   }
 
   // RENAME MEMBER
-  if (command === "sp_rename") {
+  if (command === "sp_rename" || command === "sp_rm") {
     const target = args[1];
     const newName = args.slice(2).join(" ");
 
@@ -661,11 +669,11 @@ client.on("messageCreate", (message) => {
   }
 
   // MEMBER ID LOOKUP
-  if (command === "sp_id") {
+  if (command === "sp_id" || command === "sp_find") {
     const search = args.slice(1).join(" ");
 
     if (!search) {
-      return message.channel.send("Usage: `sp_id <member name>`");
+      return message.channel.send("Usage: `sp_id <member name or ID>`");
     }
 
     const results = findMembers(userData, search);
@@ -684,29 +692,6 @@ client.on("messageCreate", (message) => {
     );
   }
 
-  // FIND MEMBER
-  if (command === "sp_find") {
-    const search = args.slice(1).join(" ");
-
-    if (!search) {
-      return message.channel.send("Usage: `sp_find <member ID or name>`");
-    }
-
-    const results = findMembers(userData, search);
-
-    if (results.length === 0) {
-      return message.channel.send("No matching members.");
-    }
-
-    return message.channel.send(
-      results
-        .map(
-          ([id, member]) =>
-            `• **${member.name}** — ${member.points} points\n  ID: \`${id}\``
-        )
-        .join("\n")
-    );
-  }
 
   // MEMBER INFO
   if (command === "sp_member" || command === "sp_memberinfo") {
@@ -791,7 +776,7 @@ client.on("messageCreate", (message) => {
   }
 
   // ADD POINTS
-  if (command === "sp_addpoints") {
+  if (command === "sp_addpoints" || command === "sp_ap") {
     const target = args[1];
     const amount = Number(args[2]);
 
@@ -824,7 +809,7 @@ client.on("messageCreate", (message) => {
   }
 
   // REMOVE POINTS
-  if (command === "sp_removepoints") {
+  if (command === "sp_removepoints" || command === "sp_rp") {
     const target = args[1];
     const amount = Number(args[2]);
 
@@ -857,7 +842,7 @@ client.on("messageCreate", (message) => {
   }
 
   // SET POINTS
-  if (command === "sp_setpoints") {
+  if (command === "sp_setpoints" || command === "sp_sp") {
     const target = args[1];
     const amount = Number(args[2]);
 
@@ -949,9 +934,9 @@ client.on("messageCreate", (message) => {
   // =====================
 
   if (
-	command === "sp_chore" ||
-	command === "sp_chores"
-) {
+    command === "sp_chore" ||
+    command === "sp_chores"
+  ) {
     const subcommand = normalize(args[1]);
 
     // ADD CHORE
